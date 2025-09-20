@@ -3,5 +3,5 @@ from assistant.views import ParseQueryView
 
 
 urlpatterns = [
-    path("parse/", ParseQueryView.as_view()),
+    path("query/", ParseQueryView.as_view()),
 ]
