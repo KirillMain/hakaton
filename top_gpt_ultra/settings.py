@@ -7,7 +7,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = "django-insecure-p3xg2%2d9w)@_cqm71u***_lbu27-jb3f5w4-@ofzvp48cg6c4"
 
-DEBUG = os.getenv("DEUBUG", True)
+DEBUG = os.getenv("DEBUG", "true").lower() == "true"
+
 
 ALLOWED_HOSTS = ["*"]
 
@@ -20,6 +21,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "corsheaders",
     "action",
     "assistant",
     "help",
@@ -30,6 +32,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
+    "corsheaders.middleware.CorsMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
@@ -56,13 +59,8 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "top_gpt_ultra.wsgi.application"
 
-# CORS_ORIGIN_ALLOW_ALL = True
-
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://localhost:3001",
-    "http://localhost:4200",
-]
+CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_CREDENTIALS = True
 
 DATABASES = {
     "default": {
