@@ -6,12 +6,7 @@ from django.core.validators import MinValueValidator, MaxValueValidator
 
 class QueryLog(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
-    user = models.ForeignKey(
-        User,
-        on_delete=models.CASCADE,
-        related_name="assistant_queries",
-        verbose_name="Пользователь",
-    )
+    user_id=models.UUIDField(primary_key=True, default=uuid.uuid4)
     query_text = models.TextField()
     normalized_text = models.TextField()
     intent = models.CharField(
