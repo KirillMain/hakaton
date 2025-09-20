@@ -7,6 +7,7 @@ from sentence_transformers import SentenceTransformer
 from datetime import datetime
 import re
 
+
 BASE_DIR = Path(__file__).resolve().parent
 
 

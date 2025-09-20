@@ -1,12 +1,11 @@
 from django.db import models
 import uuid
-from django.contrib.auth.models import User
 from django.core.validators import MinValueValidator, MaxValueValidator
 
 
 class QueryLog(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
-    user_id=models.UUIDField(primary_key=True, default=uuid.uuid4)
+    # user_id=models.UUIDField(primary_key=True, default=uuid.uuid4)
     query_text = models.TextField()
     normalized_text = models.TextField()
     intent = models.CharField(
@@ -14,13 +13,14 @@ class QueryLog(models.Model):
         verbose_name="Интент",
         help_text="Распознанное намерение пользователя",
     )
-    ACTION_TYPES = [("search", "Поиск"), ("action", "Действие")]
+    # ACTION_TYPES = [("search", "Поиск"), ("action", "Действие")]
     action_type = models.CharField(
-        max_length=20, choices=ACTION_TYPES, verbose_name="Тип действия"
+        max_length=32, verbose_name="Тип действия", blank=True, null=True
     )
     entities = models.JSONField(
         verbose_name="Сущности",
         default=dict,
+        blank=True,
     )
     confidence = models.FloatField(
         verbose_name="Уверенность",
