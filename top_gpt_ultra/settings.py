@@ -60,6 +60,7 @@ WSGI_APPLICATION = "top_gpt_ultra.wsgi.application"
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:3001",
+    "http://localhost:4200",
 ]
 
 DATABASES = {
