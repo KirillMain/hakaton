@@ -7,10 +7,11 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = "django-insecure-p3xg2%2d9w)@_cqm71u***_lbu27-jb3f5w4-@ofzvp48cg6c4"
 
-DEBUG = True
+DEBUG = False
 
 ALLOWED_HOSTS = ["*"]
 
+INTENT_MODEL_DIR = BASE_DIR / "ml_models" / "intent_lr-3"
 
 INSTALLED_APPS = [
     "django.contrib.admin",
