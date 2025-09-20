@@ -36,7 +36,7 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
-ROOT_URLCONF = 'top_gpt_ultra.top_gpt_ultra.urls'
+ROOT_URLCONF = 'top_gpt_ultra.urls'
 
 TEMPLATES = [
     {
@@ -53,7 +53,7 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = 'top_gpt_ultra.top_gpt_ultra.wsgi.application'
+WSGI_APPLICATION = 'top_gpt_ultra.wsgi.application'
 
 
 DATABASES = {
