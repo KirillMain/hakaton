@@ -55,6 +55,8 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'top_gpt_ultra.wsgi.application'
 
+CORS_ORIGIN_ALLOW_ALL = True
+
 
 DATABASES = {
     "default": {
