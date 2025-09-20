@@ -10,5 +10,4 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 
 COPY . .
 
-CMD ["cd", "top_gpt_ultra"]
-CMD ["gunicorn", "top_gpt_ultra.wsgi:application", "--bind", "0.0.0.0:8000"]
+CMD ["gunicorn", "top_gpt_ultra.top_gpt_ultra.wsgi:application", "--bind", "0.0.0.0:8000"]
