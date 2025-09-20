@@ -14,6 +14,8 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import classification_report, f1_score, confusion_matrix
 from sklearn.model_selection import GroupShuffleSplit, train_test_split
 
+from assistant.nlp.nlp_utils import correct_and_detect
+
 
 def normalize_text(s: str) -> str:
     if s is None:
@@ -227,6 +229,8 @@ def process_query(
     text: str, model_dir: str, profile: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     bundle = load_bundle(model_dir)
+    user_text = text
+    text = correct_and_detect(text)["corrected"]
     entities = extract_entities(text)
 
     rule = quick_rules_override(text)
@@ -258,7 +262,7 @@ def process_query(
         as_of = profile.get("as_of_date") or None
 
     result = {
-        "input": text,
+        "input": user_text,
         "intent": intent,
         "intent_confidence": round(conf or 0.0, 4),
         "entities": {

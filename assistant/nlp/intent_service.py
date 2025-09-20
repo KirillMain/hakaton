@@ -1,5 +1,6 @@
 from django.conf import settings
 from typing import Dict, Any, Optional
+
 from .intent_pipeline import process_query, load_bundle
 
 MODEL_DIR = str(settings.INTENT_MODEL_DIR)
