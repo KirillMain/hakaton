@@ -1,3 +1,4 @@
+from pathlib import Path
 import requests
 import json
 import numpy as np
@@ -5,6 +6,8 @@ import faiss
 from sentence_transformers import SentenceTransformer
 from datetime import datetime
 import re
+
+BASE_DIR = Path(__file__).resolve().parent
 
 
 class ArticleVectorizer:
@@ -83,7 +86,6 @@ class ArticleVectorizer:
 
         decoded_content = html.unescape(text)
         clean_text = re.sub(r"<[^>]+>", " ", decoded_content)
-        clean_text = re.sub(r"\s+", " ", clean_text).strip()
         clean_text = re.sub(r"\s+", " ", clean_text).strip()
         return clean_text
 
@@ -236,7 +238,7 @@ def main():
             # Строим индекс
             if vectorizer.build_index():
                 # Сохраняем всё
-                vectorizer.save_data("mos_zakupki_articles")
+                vectorizer.save_data(str(BASE_DIR) + "\\mos_zakupki_articles")
 
                 # Тестовый поиск
                 test_query = "как подать заявку на участие"
@@ -254,7 +256,7 @@ def search_example():
     vectorizer = ArticleVectorizer()
 
     # Загружаем сохраненные данные
-    if vectorizer.load_data("mos_zakupki_articles"):
+    if vectorizer.load_data(str(BASE_DIR) + "\\mos_zakupki_articles"):
         while True:
             query = input("\nВведите поисковый запрос (или 'quit' для выхода): ")
             if query.lower() == "quit":
@@ -263,13 +265,10 @@ def search_example():
             results = vectorizer.search_articles(query, top_k=5)
 
             print(f"\nНайдено статей: {len(results)}")
-            for i, result in enumerate(results, 1):
+            for i, result in enumerate(results, 0):
                 article = result["article"]
-                print(f"{i}. [{result['score']:.3f}] {article['title']}")
+                print(f"{i+1}. [{result['score']:.6f}] {article['title']}")
                 print(f"   ID: {article['id']}")
-                if article.get("url"):
-                    print(f"   URL: {article['url']}")
-                print()
 
 
 # if __name__ == "__main__":
