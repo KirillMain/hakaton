@@ -10,9 +10,9 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import classification_report, f1_score, confusion_matrix
 
-from assistant.nlp.nlp_utils import correct_and_detect
 from assistant.arts import get_serialized_arts_by_text
 
+from assistant.nlp.nlp_utils import preprocess_text
 from history.utils import find_any_history_model
 
 
@@ -169,13 +169,82 @@ class Entities:
     as_of_date: Optional[str] = None
     qty: Optional[str] = None
     budget: Optional[str] = None
+    name: Optional[str] = None
 
 
 PURCHASE_ID_RE = re.compile(r"\b\d{5,}\b")
 INN_RE = re.compile(r"\b\d{10}(\d{2})?\b")
 DATE_RE = re.compile(r"\b(20\d{2})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])\b")
-QTY_RE = re.compile(r"\b(\d{1,5})\s*шт\b", re.IGNORECASE)
+QTY_RE = re.compile(r"\b(\d{1,5})\s*шт\.?\b", re.IGNORECASE)
 BUDGET_RE = re.compile(r"\b(\d[\d\s]{3,})\s*руб\b", re.IGNORECASE)
+
+UNITS_RX = r"(?:шт\.?|штук|ед\.?|уп\.?|упак\.?|комплект(?:а|ов)?|позици(?:я|и))"
+EXPL_NAME_RE = re.compile(
+    r"(?:наименовани[ея]|предмет\s+закупки|товар)\s*[:\-–]\s*([^\n,.;]+)",
+    re.IGNORECASE,
+)
+
+QUOTED_NAME_RE = re.compile(r"[\"«“„]([^\"»”]+)[\"»”]")
+AFTER_NA_CTX_RE = re.compile(
+    rf"(?:закупк\w+|сесс\w+)\s+(?:на|по)\s+([^\n,.;:]+?)(?=\s*\d+\s*{UNITS_RX}\b|[,.;:!?]|\bна\s+сумм|\bза\b|\bпо\b|$)",
+    re.IGNORECASE,
+)
+AFTER_NA_GENERIC_RE = re.compile(
+    rf"\bна\s+([^\n,.;:]+?)(?=\s*\d+\s*{UNITS_RX}\b|[,.;:!?]|\bна\s+сумм|\bза\b|\bпо\b|$)",
+    re.IGNORECASE,
+)
+TAIL_JUNK_RE = re.compile(
+    rf"\s*(?:\d+\s*{UNITS_RX}\b|на\s+сумм[уы]|за\s+\d+|по\s+\d+)\s*$",
+    re.IGNORECASE,
+)
+
+
+def _clean_name_fragment(s: str) -> Optional[str]:
+    if not s:
+        return None
+    s = TAIL_JUNK_RE.sub("", s).strip()
+    s = re.sub(r"\s+", " ", s)
+    if len(s) < 3:
+        return None
+    if normalize_text(s) in {
+        "закупка",
+        "котировочная сессия",
+        "сессия",
+        "прямая закупка",
+    }:
+        return None
+    return s
+
+
+def extract_name(text: str) -> Optional[str]:
+    raw = text or ""
+    m = EXPL_NAME_RE.search(raw)
+    if m:
+        cand = _clean_name_fragment(m.group(1))
+        if cand:
+            return cand
+
+    quoted = QUOTED_NAME_RE.findall(raw)
+    if quoted:
+        quoted = sorted((q.strip() for q in quoted), key=len, reverse=True)
+        for q in quoted:
+            cand = _clean_name_fragment(q)
+            if cand:
+                return cand
+
+    m = AFTER_NA_CTX_RE.search(raw)
+    if m:
+        cand = _clean_name_fragment(m.group(1))
+        if cand:
+            return cand
+
+    m = AFTER_NA_GENERIC_RE.search(raw)
+    if m:
+        cand = _clean_name_fragment(m.group(1))
+        if cand:
+            return cand
+
+    return None
 
 
 def extract_entities(text: str) -> Entities:
@@ -185,12 +254,15 @@ def extract_entities(text: str) -> Entities:
     date = DATE_RE.search(t)
     qty = QTY_RE.search(t)
     budget = BUDGET_RE.search(t)
+    name = extract_name(text)
+
     return Entities(
         purchase_id=pid.group(0) if pid else None,
         inn=inn.group(0) if inn else None,
         as_of_date=date.group(0) if date else None,
         qty=qty.group(1) if qty else None,
         budget=re.sub(r"\s+", "", budget.group(1)) if budget else None,
+        name=name,
     )
 
 
@@ -241,7 +313,11 @@ def build_examples(text: str, tags: List[str], ent: Entities) -> List[str]:
     if "ACTION_VERB" in tags and not any(
         t in tags for t in ["DIRECT_PURCHASE", "NEEDS_PROCUREMENT", "QUOTE_SESSION"]
     ):
-        ex += ["Создать котировочную сессию", "Создать прямую закупку", "Создать закупку по потребностям"]
+        ex += [
+            "Создать котировочную сессию",
+            "Создать прямую закупку",
+            "Создать закупку по потребностям",
+        ]
 
     if "QUESTION" in tags or "HELP_KEYWORD" in tags:
         ex += ["Как создать прямую закупку?", "Как объединить профили организации?"]
@@ -415,6 +491,10 @@ def process_query(
         inn = profile.get("inn") or None
         as_of = profile.get("as_of_date") or None
 
+    name_query = entities.name or (
+        None if entities.purchase_id else normalize_text(text)
+    )
+
     result: Dict[str, Any] = {
         "input": user_text,
         "intent": intent,
@@ -425,6 +505,7 @@ def process_query(
             "as_of_date": entities.as_of_date,
             "qty": entities.qty,
             "budget": entities.budget,
+            "name": entities.name,
         },
         "action_type": action_type if intent == "ACTION" else None,
         "action_type_confidence": (
@@ -445,13 +526,15 @@ def process_query(
 
     elif intent == "VIEW":
         history_data = find_any_history_model(
-            entities.purchase_id, entities.inn or inn, normalize_text(text)
+            entities.purchase_id,
+            entities.inn or inn,
+            name_query or normalize_text(text),
         )
         result["routing"] = {
             "type": "VIEW",
             "purchase_id": entities.purchase_id,
             "inn": entities.inn or inn,
-            "name_query": None if entities.purchase_id else normalize_text(text),
+            "name_query": name_query,
             "as_of_date": entities.as_of_date or as_of,
             "data": history_data,
         }
@@ -465,6 +548,7 @@ def process_query(
                 "inn": inn,
                 "qty": entities.qty,
                 "budget": entities.budget,
+                "name": preprocess_text(entities.name),
             },
         }
 
