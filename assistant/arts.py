@@ -87,11 +87,10 @@ class ArticleVectorizer:
                             )
 
                 print(f"Загружено {len(self.articles)} статей")
-                return True
 
             except Exception as e:
                 print(f"Ошибка при загрузке статей: {e}")
-                return False
+        return True
 
     def clean_html(self, text):
         """Очистка HTML тегов из текста"""
@@ -294,7 +293,7 @@ def init_model():
     else:
         print("Сохраненные данные не найдены")
         print("Загрузка новых данных")
-        articles_url = "https://zakupki.mos.ru/newapi/api/KnowledgeBase/GetArticlesBySectionType?sectionType=supplier"
+        articles_url = "https://zakupki.mos.ru/newapi/api/KnowledgeBase/GetArticlesBySectionType"
         if vectorizer.fetch_articles(articles_url) and vectorizer.create_embeddings() and vectorizer.build_index():
             vectorizer.save_data(data_path)
             _article_vectorizer = vectorizer
