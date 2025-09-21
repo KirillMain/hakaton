@@ -1,5 +1,5 @@
 from django.urls import path, include
-from top_gpt_ultra.views import Alive
+from config.views import Alive
 
 urlpatterns = [
     path("alive/", Alive.as_view()),

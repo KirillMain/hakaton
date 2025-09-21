@@ -8,7 +8,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         file_path = (
-            "D:\programming\hakaton\\top_gpt_ultra\history\management\commands\qs.xlsx"
+            "D:\programming\hakaton\\config\history\management\commands\qs.xlsx"
         )
 
         df = pd.read_excel(file_path, sheet_name="Лист1")
