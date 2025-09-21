@@ -208,3 +208,5 @@ __marimo__/
 
 *.xlsx
 mos_zakupki_articles/
+
+GetArticlesBySectionType.json
