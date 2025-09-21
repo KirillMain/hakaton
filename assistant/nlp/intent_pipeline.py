@@ -548,7 +548,7 @@ def process_query(
                 "inn": inn,
                 "qty": entities.qty,
                 "budget": entities.budget,
-                "name": preprocess_text(entities.name),
+                "name": preprocess_text(entities.name) if entities.name else None,
             },
         }
 
