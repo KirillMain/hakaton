@@ -40,10 +40,9 @@ class ArticleVectorizer:
 
         sections = ["customer", "supplier", "general", "instruction"]
 
-        print(f"Загружаем статьи с {url}...")
-
         for section in sections:
             url = f"{url_base}?sectionType={section}"
+            print(f"Загружаем статьи с {url}...")
 
             try:
                 response = requests.get(url, timeout=30)
