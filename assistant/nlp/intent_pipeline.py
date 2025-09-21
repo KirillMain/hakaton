@@ -1,10 +1,13 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 import argparse
 import json
 import os
 import re
 import sys
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, List
 
 import joblib
 import numpy as np
@@ -13,8 +16,6 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import classification_report, f1_score, confusion_matrix
 from sklearn.model_selection import GroupShuffleSplit, train_test_split
-
-from assistant.nlp.nlp_utils import correct_and_detect
 
 
 def normalize_text(s: str) -> str:
@@ -26,7 +27,36 @@ def normalize_text(s: str) -> str:
     return s
 
 
-def build_vectorizers(max_features_w=120000, max_features_c=80000):
+def get_text_series(df: pd.DataFrame) -> pd.Series:
+    if "query" in df.columns:
+        return df["query"].astype(str)
+    if "text" in df.columns:
+        return df["text"].astype(str)
+    raise ValueError("CSV must contain either 'query' or 'text' column")
+
+
+def ensure_intent_column(df: pd.DataFrame) -> pd.DataFrame:
+    if "intent" not in df.columns:
+        raise ValueError("CSV must contain 'intent' column")
+    df["intent"] = df["intent"].fillna("").astype(str).str.strip().str.upper()
+    return df
+
+
+def ensure_action_type_column(df: pd.DataFrame) -> pd.DataFrame:
+    if "action_type" not in df.columns:
+        df["action_type"] = "OTHER"
+    df["action_type"] = (
+        df["action_type"]
+        .fillna("OTHER")
+        .astype(str)
+        .str.strip()
+        .replace("", "OTHER")
+        .str.upper()
+    )
+    return df
+
+
+def build_vectorizers(max_features_w=120_000, max_features_c=80_000):
     word = TfidfVectorizer(
         analyzer="word",
         ngram_range=(1, 2),
@@ -34,6 +64,7 @@ def build_vectorizers(max_features_w=120000, max_features_c=80000):
         max_features=max_features_w,
         token_pattern=r"(?u)\b\w[\w\-]+\b",
         dtype=np.float32,
+        sublinear_tf=True,
     )
     char = TfidfVectorizer(
         analyzer="char",
@@ -41,6 +72,7 @@ def build_vectorizers(max_features_w=120000, max_features_c=80000):
         min_df=2,
         max_features=max_features_c,
         dtype=np.float32,
+        sublinear_tf=True,
     )
     return word, char
 
@@ -54,50 +86,54 @@ def _transform(word_vec: TfidfVectorizer, char_vec: TfidfVectorizer, texts: pd.S
 
 
 def fit_intent_clf(
-    df: pd.DataFrame, word_vec: TfidfVectorizer, char_vec: TfidfVectorizer
+    texts: pd.Series,
+    labels: pd.Series,
+    word_vec: TfidfVectorizer,
+    char_vec: TfidfVectorizer,
 ):
-    X_text = df["query"].map(normalize_text).fillna("")
-    Xw = word_vec.fit_transform(X_text)
-    Xc = char_vec.fit_transform(X_text)
+    Xw = word_vec.fit_transform(texts.map(normalize_text).fillna(""))
+    Xc = char_vec.fit_transform(texts.map(normalize_text).fillna(""))
     from scipy.sparse import hstack
 
     X = hstack([Xw, Xc], format="csr")
-    y = df["intent"].values
-    clf = LogisticRegression(max_iter=2000, solver="lbfgs")
+    y = labels.values
+    clf = LogisticRegression(max_iter=2000, solver="lbfgs", class_weight="balanced")
     clf.fit(X, y)
     return clf
 
 
 def fit_action_type_clf(
-    df_action: pd.DataFrame, word_vec: TfidfVectorizer, char_vec: TfidfVectorizer
+    texts: pd.Series,
+    labels: pd.Series,
+    word_vec: TfidfVectorizer,
+    char_vec: TfidfVectorizer,
 ):
-    X_text = df_action["query"].map(normalize_text).fillna("")
-    Xw = word_vec.fit_transform(X_text)
-    Xc = char_vec.fit_transform(X_text)
+    Xw = word_vec.fit_transform(texts.map(normalize_text).fillna(""))
+    Xc = char_vec.fit_transform(texts.map(normalize_text).fillna(""))
     from scipy.sparse import hstack
 
     X = hstack([Xw, Xc], format="csr")
-    y = df_action["action_type"].fillna("OTHER").replace("", "OTHER").values
-    clf = LogisticRegression(max_iter=2000, solver="lbfgs")
+    y = labels.values
+    clf = LogisticRegression(max_iter=2000, solver="lbfgs", class_weight="balanced")
     clf.fit(X, y)
     return clf
 
 
 def eval_clf(
-    df: pd.DataFrame,
+    texts: pd.Series,
+    labels: pd.Series,
     word_vec: TfidfVectorizer,
     char_vec: TfidfVectorizer,
     clf,
-    label_column: str,
 ) -> Dict[str, Any]:
-    X = _transform(word_vec, char_vec, df["query"])
-    y_true = df[label_column].values
+    X = _transform(word_vec, char_vec, texts)
+    y_true = labels.values
     y_pred = clf.predict(X)
     macro_f1 = f1_score(y_true, y_pred, average="macro")
     report_txt = classification_report(
         y_true, y_pred, zero_division=0, output_dict=False
     )
-    cm = confusion_matrix(y_true, y_pred, labels=sorted(pd.unique(df[label_column])))
+    cm = confusion_matrix(y_true, y_pred, labels=sorted(pd.unique(labels)))
     return {
         "macro_f1": float(macro_f1),
         "report": report_txt,
@@ -114,20 +150,17 @@ def save_bundle(out_dir: str, bundle: Dict[str, Any]):
 
 
 def load_bundle(model_dir: str) -> Dict[str, Any]:
-    need = [
-        "intent_word_vec",
-        "intent_char_vec",
-        "intent_clf",
-        "atype_word_vec",
-        "atype_char_vec",
-        "atype_clf",
-    ]
+    names_required = ["intent_word_vec", "intent_char_vec", "intent_clf"]
+    names_optional = ["atype_word_vec", "atype_char_vec", "atype_clf"]
     out = {}
-    for n in need:
+    for n in names_required:
         path = os.path.join(model_dir, f"{n}.joblib")
         if not os.path.exists(path):
-            raise FileNotFoundError(f"Missing {path}")
+            raise FileNotFoundError(f"Missing required model file: {path}")
         out[n] = joblib.load(path)
+    for n in names_optional:
+        path = os.path.join(model_dir, f"{n}.joblib")
+        out[n] = joblib.load(path) if os.path.exists(path) else None
     return out
 
 
@@ -161,6 +194,84 @@ def extract_entities(text: str) -> Entities:
         qty=qty.group(1) if qty else None,
         budget=re.sub(r"\s+", "", budget.group(1)) if budget else None,
     )
+
+
+def extract_tags(text: str) -> List[str]:
+    t = normalize_text(text)
+    tags = []
+    if "?" in text:
+        tags.append("QUESTION")
+    if re.search(r"\b(что такое|как|где|зачем|почему|инструкция|справк|faq)\b", t):
+        tags.append("HELP_KEYWORD")
+    if re.search(r"\d{5,}", t):
+        tags.append("NUMBER")
+    if INN_RE.search(t):
+        tags.append("INN")
+    if re.search(r"\b(найти|показать|посмотреть)\b", t):
+        tags.append("VIEW_VERB")
+    if re.search(
+        r"\b(создать|создай|оформи|сделай|открой|запусти|размести|измени|повтори|скопируй)\b",
+        t,
+    ):
+        tags.append("ACTION_VERB")
+    if re.search(r"\bпрям(ая|ую)?\s+закуп", t):
+        tags.append("DIRECT_PURCHASE")
+    if "потребност" in t or "по потребност" in t:
+        tags.append("NEEDS_PROCUREMENT")
+    if "котировоч" in t or re.search(r"\bкс\b", t):
+        tags.append("QUOTE_SESSION")
+    return sorted(set(tags))
+
+
+def build_examples(text: str, tags: List[str], ent: Entities) -> List[str]:
+    """Строит примеры запросов на основе тегов и найденных сущностей."""
+    ex: List[str] = []
+
+    if "DIRECT_PURCHASE" in tags:
+        ex += ["Сделать прямую закупку", "Оформить прямую закупку"]
+    if "NEEDS_PROCUREMENT" in tags:
+        ex += ["Создать закупку по потребностям", "Оформить закупку по потребностям"]
+    if "QUOTE_SESSION" in tags:
+        ex += [
+            "Создать котировочную сессию",
+            "Скопировать котировочную сессию",
+            "Разместить котировочную сессию",
+        ]
+    if "ACTION_VERB" in tags and not any(
+        t in tags for t in ["DIRECT_PURCHASE", "NEEDS_PROCUREMENT", "QUOTE_SESSION"]
+    ):
+        ex += ["Создать закупку", "Оформить закупку"]
+
+    if "QUESTION" in tags or "HELP_KEYWORD" in tags:
+        ex += ["Как создать прямую закупку?", "Как объединить профили организации?"]
+
+    if "VIEW_VERB" in tags or ent.purchase_id or ent.inn:
+        if ent.purchase_id:
+            ex.append(f"Показать закупку {ent.purchase_id}")
+        if ent.inn:
+            ex.append(f"Показать закупки по ИНН {ent.inn}")
+        if not (ent.purchase_id or ent.inn):
+            ex.append("Показать мои закупки")
+
+    if "NUMBER" in tags and not ent.purchase_id:
+        ex.append("Показать закупку 123456")
+
+    if not ex:
+        ex = [
+            "Создать котировочную сессию",
+            "Сделать прямую закупку",
+            "Как загрузить МЧД в профиль пользователя?",
+        ]
+
+    seen = set()
+    out = []
+    for q in ex:
+        if q not in seen:
+            out.append(q)
+            seen.add(q)
+        if len(out) >= 6:
+            break
+    return out
 
 
 def softmax(logits: np.ndarray) -> np.ndarray:
@@ -217,11 +328,41 @@ def quick_rules_override(text: str) -> Optional[str]:
         or re.search(r"\b(найти|показать|посмотреть)\b", t)
     ):
         return "VIEW"
-    if re.search(
-        r"\b(создать|оформить|запустить|подать|открыть|разместить|редактировать|изменить|повторить)\b",
-        t,
+    action_verbs = (
+        r"создать|создай|создайте|"
+        r"оформить|оформи|оформите|"
+        r"запустить|запусти|запустите|"
+        r"подать|подай|подайте|"
+        r"открыть|открой|откройте|"
+        r"разместить|размести|разместите|"
+        r"редактировать|редактируй|редактируйте|"
+        r"изменить|измени|измените|"
+        r"повторить|повтори|повторите|"
+        r"скопировать|скопируй|скопируйте|"
+        r"сделать|сделай|сделайте"
+    )
+    if re.search(rf"\b({action_verbs})\b", t):
+        return "ACTION"
+    if (
+        re.search(r"\bпрям(ая|ую)?\s+закуп", t)
+        or "по потребност" in t
+        or "котировоч" in t
+        or re.search(r"\bкс\b", t)
     ):
         return "ACTION"
+    return None
+
+
+def action_type_hint(text: str) -> Optional[str]:
+    t = normalize_text(text)
+    if re.search(r"\bпрям(ая|ую)?\s+закуп", t):
+        return "DIRECT_PURCHASE"
+    if "потребност" in t or "по потребност" in t:
+        return "NEEDS_PROCUREMENT"
+    if "котировоч" in t or re.search(r"\bкс\b", t):
+        return "QUOTE_SESSION"
+    if re.search(r"\bповтор(ить|и|ите)?\b", t) or "ещё раз" in t or "сделай тоже" in t:
+        return "REPEAT"
     return None
 
 
@@ -229,13 +370,16 @@ def process_query(
     text: str, model_dir: str, profile: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     bundle = load_bundle(model_dir)
-    user_text = text
-    text = correct_and_detect(text)["corrected"]
     entities = extract_entities(text)
 
     rule = quick_rules_override(text)
+    hint = action_type_hint(text)
+
     if rule:
         intent = rule
+        conf = 0.66
+    elif hint:
+        intent = "ACTION"
         conf = 0.66
     else:
         intent, conf = predict_intent(
@@ -247,13 +391,21 @@ def process_query(
 
     action_type, action_conf = None, None
     if intent == "ACTION":
-        atype, aconf = predict_action_type(
-            text,
-            bundle["atype_word_vec"],
-            bundle["atype_char_vec"],
-            bundle["atype_clf"],
-        )
-        action_type, action_conf = atype, aconf
+        if (
+            bundle.get("atype_word_vec") is not None
+            and bundle.get("atype_char_vec") is not None
+            and bundle.get("atype_clf") is not None
+        ):
+            atype, aconf = predict_action_type(
+                text,
+                bundle["atype_word_vec"],
+                bundle["atype_char_vec"],
+                bundle["atype_clf"],
+            )
+            action_type, action_conf = atype, aconf
+        if action_type is None or (action_conf is not None and action_conf < 0.60):
+            if hint:
+                action_type = hint
 
     inn = None
     as_of = None
@@ -262,7 +414,7 @@ def process_query(
         as_of = profile.get("as_of_date") or None
 
     result = {
-        "input": user_text,
+        "input": text,
         "intent": intent,
         "intent_confidence": round(conf or 0.0, 4),
         "entities": {
@@ -301,6 +453,9 @@ def process_query(
             },
         }
     else:
+        # UNKNOWN
+        tags = extract_tags(text)
         result["routing"] = {"type": "UNKNOWN", "hint": "Уточните запрос"}
+        result["tags"] = build_examples(text, tags, entities)
 
     return result

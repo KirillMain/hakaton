@@ -65,6 +65,46 @@ def _expand_abbrev_quote_session(text: str) -> str:
     return text
 
 
+_KS_CORE = r"k\.?\s*[-/\\]?\s*s\.?"
+_KS_CORE_CYR = r"к\.?\s*[-/\\]?\s*с\.?"
+_KS_ANY = rf"(?:{_KS_CORE}|{_KS_CORE_CYR})"
+
+_PREP_PREP = r"(?:о|об|про|по|к|для|до|после|перед|из|из-за)"
+_PREP_ACC = r"(?:в|на)"
+
+_VERBS_ACC = (
+    r"(?:открыт\w*|создат\w*|объяв\w*|провест\w*|начат\w*|запуст\w*|опубликов\w*)"
+)
+
+
+def _expand_abbrev_ks(text: str) -> str:
+    text = re.sub(
+        rf"\b({_PREP_PREP})\s+{_KS_ANY}\b",
+        r"\1 котировочной сессии",
+        text,
+        flags=re.I,
+    )
+    text = re.sub(
+        rf"\b({_PREP_ACC})\s+{_KS_ANY}\b",
+        r"\1 котировочную сессию",
+        text,
+        flags=re.I,
+    )
+    text = re.sub(
+        rf"\b({_VERBS_ACC})\s+{_KS_ANY}\b",
+        r"\1 котировочную сессию",
+        text,
+        flags=re.I,
+    )
+    text = re.sub(
+        rf"\b{_KS_ANY}\b",
+        "котировочная сессия",
+        text,
+        flags=re.I,
+    )
+    return text
+
+
 def _build_symspell(
     csv_path: Optional[str] = None, extra_words: Optional[Dict[str, int]] = None
 ) -> SymSpell:
@@ -90,6 +130,9 @@ def _build_symspell(
     return sym
 
 
+_STOPWORDS = {"по", "на", "в", "о", "об", "при", "из", "для", "к"}
+
+
 def _symspell_fix(sym: SymSpell, text: str) -> str:
     text_norm = _normalize(text)
     compound = sym.lookup_compound(text_norm, max_edit_distance=2)
@@ -97,6 +140,9 @@ def _symspell_fix(sym: SymSpell, text: str) -> str:
 
     out: List[str] = []
     for w in text_fixed.split():
+        if w in _STOPWORDS:
+            out.append(w)
+            continue
         if len(w) <= 2:
             out.append(w)
             continue
@@ -130,7 +176,6 @@ def _fix_kotirovochnaya_fuzzy(text: str) -> str:
             return 0
 
     for i in sess_pos:
-        # смотрим 1–2 слова слева
         for j in (i - 1, i - 2):
             if j < 0:
                 continue
@@ -155,6 +200,7 @@ _INTENT_PATTERNS = {
     "quote_session": [
         re.compile(r"\bкотир\w*\b.*\bсес+\w*\b", re.I),
         re.compile(r"\bкот\b[^\S\r\n]*\bсес+\w*\b", re.I),
+        re.compile(rf"\b{_KS_ANY}\b", re.I),
     ],
     "direct_purchase": [
         re.compile(r"\b(прям(ая|о)|напрямую)\b.*\bзакуп\w*\b", re.I),
@@ -188,7 +234,6 @@ _engine_symspell: Optional[SymSpell] = None
 def init_engine(
     csv_path: Optional[str] = None, extra_words: Optional[Dict[str, int]] = None
 ) -> None:
-    """Явная инициализация (можно вызвать в AppConfig.ready())."""
     global _engine_symspell
     with _lock:
         _engine_symspell = _build_symspell(csv_path=csv_path, extra_words=extra_words)
@@ -204,21 +249,17 @@ def _get_engine() -> SymSpell:
 
 
 def preprocess_text(text: str) -> str:
-    """
-    Только коррекция (без детекции интента).
-    """
     sym = _get_engine()
     t = _expand_abbrev_quote_session(text)
+    t = _expand_abbrev_ks(t)
     t = _symspell_fix(sym, t)
     t = _fix_kotirovochnaya_fuzzy(t)
     t = _expand_abbrev_quote_session(t)
+    t = _expand_abbrev_ks(t)
     return _normalize(t)
 
 
 def correct_and_detect(text: str) -> Dict[str, str]:
-    """
-    Полный цикл: коррекция + интент + канон.
-    """
     corrected = preprocess_text(text)
     intent = _detect_intent(corrected)
     canonical = _INTENT_CANON.get(intent, corrected)

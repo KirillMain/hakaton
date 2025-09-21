@@ -12,7 +12,7 @@ DEBUG = os.getenv("DEBUG", "true").lower() == "true"
 
 ALLOWED_HOSTS = ["*"]
 
-INTENT_MODEL_DIR = BASE_DIR / "ml_models" / "intent_lr-3"
+INTENT_MODEL_DIR = BASE_DIR / "ml_models" / "intent_lr-4"
 
 INSTALLED_APPS = [
     "django.contrib.admin",
