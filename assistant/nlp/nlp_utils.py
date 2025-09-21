@@ -48,10 +48,10 @@ DOMAIN_WORDS: Dict[str, int] = {
     "поставщик": 40,
     "контракт": 40,
     "аукцион": 40,
-    "лот": 25,
-    "лоты": 25,
     "реестр": 25,
     "единый": 25,
+    "лот": 8,
+    "лоты": 8,
 }
 
 
@@ -124,13 +124,95 @@ def _build_symspell(
             if len(token) > 1:
                 freq[token] += c
 
+    for qw in _QWORDS:
+        freq[qw] += 200
+    freq["такое"] += 400
+
     for w, c in freq.items():
         sym.create_dictionary_entry(w, c)
 
     return sym
 
 
-_STOPWORDS = {"по", "на", "в", "о", "об", "при", "из", "для", "к"}
+_QWORDS = {
+    "что",
+    "как",
+    "где",
+    "когда",
+    "зачем",
+    "почему",
+    "сколько",
+    "какой",
+    "какая",
+    "какие",
+    "каков",
+    "какова",
+    "каковы",
+    "куда",
+    "откуда",
+    "чей",
+    "чья",
+    "чьё",
+    "чьи",
+    "чем",
+    "это",
+    "такое",
+}
+
+_QPHRASES = {("что", "такое"), ("что", "это")}
+
+_STOPWORDS = {"по", "на", "в", "о", "об", "при", "из", "для", "к"} | _QWORDS
+
+_ACTION_VERBS = {
+    "создать",
+    "создай",
+    "создайте",
+    "оформить",
+    "оформи",
+    "оформите",
+    "запустить",
+    "запусти",
+    "запустите",
+    "подать",
+    "подай",
+    "подайте",
+    "открыть",
+    "открой",
+    "откройте",
+    "разместить",
+    "размести",
+    "разместите",
+    "редактировать",
+    "редактируй",
+    "редактируйте",
+    "изменить",
+    "измени",
+    "измените",
+    "повторить",
+    "повтори",
+    "повторите",
+    "скопировать",
+    "скопируй",
+    "скопируйте",
+    "сделать",
+    "сделай",
+    "сделайте",
+}
+
+_DOMAIN_STABLE = {
+    "котировочная",
+    "котировочную",
+    "котировочн",
+    "сессия",
+    "сессию",
+    "закупка",
+    "закупку",
+    "закупки",
+    "закупок",
+    "ноутбук",
+    "ноутбуки",
+    "шт",
+}
 
 
 def _symspell_fix(sym: SymSpell, text: str) -> str:
@@ -139,15 +221,43 @@ def _symspell_fix(sym: SymSpell, text: str) -> str:
     text_fixed = compound[0].term if compound else text_norm
 
     out: List[str] = []
-    for w in text_fixed.split():
-        if w in _STOPWORDS:
+    toks = text_fixed.split()
+    i = 0
+    while i < len(toks):
+        w = toks[i]
+        wl = w.lower()
+
+        if i + 1 < len(toks):
+            pair = (wl, toks[i + 1].lower())
+            if pair in _QPHRASES:
+                out.append(toks[i])
+                out.append(toks[i + 1])
+                i += 2
+                continue
+
+        if (
+            wl in _STOPWORDS
+            or wl in _ACTION_VERBS
+            or wl in _DOMAIN_STABLE
+            or wl.isdigit()
+            or wl == "шт"
+            or len(w) <= 2
+        ):
             out.append(w)
+            i += 1
             continue
-        if len(w) <= 2:
+
+        sugg = sym.lookup(wl, Verbosity.TOP, max_edit_distance=2, transfer_casing=False)
+        if sugg:
+            best = sugg[0]
+            if best.distance <= 1 and (best.term not in _QWORDS or wl in _QWORDS):
+                out.append(best.term)
+            else:
+                out.append(w)
+        else:
             out.append(w)
-            continue
-        sugg = sym.lookup(w, Verbosity.TOP, max_edit_distance=2, transfer_casing=False)
-        out.append(sugg[0].term if sugg else w)
+        i += 1
+
     return " ".join(out)
 
 

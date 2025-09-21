@@ -366,7 +366,8 @@ def process_query(
     text: str, model_dir: str, profile: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     user_text = text
-    text = correct_and_detect(text)['corrected']
+    # text = correct_and_detect(text)['corrected']
+    # print(text)
     bundle = load_bundle(model_dir)
     entities = extract_entities(text)
 
