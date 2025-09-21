@@ -26,3 +26,10 @@ class ParseQueryView(APIView):
 
         # return Response(data=QueryLogSerializer(q).data, status=status.HTTP_200_OK)
         return Response(data=result, status=status.HTTP_200_OK)
+
+
+class RateQueryView(APIView):
+    def post(self, request, query_id, rate):
+        query = QueryLog.objects.get(id=query_id)
+        query.rate = rate
+        return Response(status=status.HTTP_200_OK)
