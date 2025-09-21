@@ -6,10 +6,13 @@ import faiss
 from sentence_transformers import SentenceTransformer
 from datetime import datetime
 import re
+import os
 
 
 BASE_DIR = Path(__file__).resolve().parent
 
+# Глобальная переменная для хранения инициализированной модели
+_article_vectorizer = None
 
 class ArticleVectorizer:
     def __init__(self, model_path=None):
@@ -42,6 +45,8 @@ class ArticleVectorizer:
 
             data = response.json()
 
+            unique_ids = []
+
             for cat in data:
                 for articles_by_service in cat["articlesByService"]:
                     for article in articles_by_service["articles"]:
@@ -54,14 +59,18 @@ class ArticleVectorizer:
                             else article.get("detailText")
                         )
 
+                        if article_id in unique_ids:
+                            print(f"Найден дубликат статьи с ID {article_id}, пропускаем")
+                            continue
+                        else:
+                            unique_ids.append(article_id)
+
                         # Очищаем HTML теги если они есть
-                        print("qqweqweq", content)
                         title = self.clean_html(title)
                         content = self.clean_html(content)
-                        print("zxcxzczxc", content)
 
                         # Создаем текст для эмбеддинга (заголовок + содержание)
-                        text_for_embedding = f"{title}. {content}"  # Ограничиваем длину
+                        text_for_embedding = f"{title}. {content}"
 
                         self.articles.append(
                             {
@@ -190,9 +199,37 @@ class ArticleVectorizer:
             print(f"Ошибка при загрузке данных: {e}")
             return False
 
+    def search_articles_ids(self, query, top_k=5):
+        """
+        Поиск статей по запросу и возврат только ID статей
+        """
+        if self.index is None or not self.articles:
+            print("Индекс не загружен")
+            return []
+
+        # Преобразуем запрос в вектор
+        query_embedding = self.model.encode([query], convert_to_tensor=False)
+        query_embedding = np.array(query_embedding).astype("float32")
+
+        # Ищем ближайшие векторы
+        distances, indices = self.index.search(query_embedding, top_k)
+
+        # Формируем результаты - только ID статей
+        results = []
+        for i, idx in enumerate(indices[0]):
+            if idx < len(self.articles):
+                article = self.articles[idx]
+                results.append({
+                    "id": article["id"],
+                    "score": 1 / (1 + distances[0][i]),  # Преобразуем расстояние в оценку (0-1)
+                    "distance": float(distances[0][i])
+                })
+
+        return results
+
     def search_articles(self, query, top_k=5):
         """
-        Поиск статей по запросу
+        Поиск статей по запросу (полная информация)
         """
         if self.index is None or not self.articles:
             print("Индекс не загружен")
@@ -214,67 +251,99 @@ class ArticleVectorizer:
                     {
                         "article": article,
                         "distance": float(distances[0][i]),
-                        "score": 1
-                        / (
-                            1 + distances[0][i]
-                        ),  # Преобразуем расстояние в оценку (0-1)
+                        "score": 1 / (1 + distances[0][i]),
                     }
                 )
 
         return results
 
 
-# Основной скрипт выполнения
-def main():
-    # URL для парсинга
-    articles_url = "https://zakupki.mos.ru/newapi/api/KnowledgeBase/GetArticlesBySectionType?sectionType=supplier"
-
-    # Инициализируем векторizer
+def init_model():
+    """
+    Инициализация модели при запуске сервера Django
+    Проверяет, не была ли модель уже инициализирована
+    """
+    global _article_vectorizer
+    
+    if _article_vectorizer is not None:
+        print("Модель уже инициализирована")
+        return _article_vectorizer
+    
+    print("Инициализация модели...")
+    
+    # Создаем экземпляр векторного поиска
     vectorizer = ArticleVectorizer()
-
-    # Парсим статьи
-    if vectorizer.fetch_articles(articles_url):
-        # Создаем эмбеддинги
-        if vectorizer.create_embeddings():
-            # Строим индекс
-            if vectorizer.build_index():
-                # Сохраняем всё
-                vectorizer.save_data(str(BASE_DIR) + "\\mos_zakupki_articles")
-
-                # Тестовый поиск
-                test_query = "как подать заявку на участие"
-                results = vectorizer.search_articles(test_query, top_k=3)
-
-                print(f"\nРезультаты поиска для '{test_query}':")
-                for i, result in enumerate(results, 1):
-                    print(
-                        f"{i}. {result['article']['title']} (сходство: {result['score']:.3f})"
-                    )
-
-
-def search_example():
-    # Инициализируем загрузчик
-    vectorizer = ArticleVectorizer()
-
-    # Загружаем сохраненные данные
-    if vectorizer.load_data(str(BASE_DIR) + "\\mos_zakupki_articles"):
-        while True:
-            query = input("\nВведите поисковый запрос (или 'quit' для выхода): ")
-            if query.lower() == "quit":
-                break
-
-            results = vectorizer.search_articles(query, top_k=5)
-
-            print(f"\nНайдено статей: {len(results)}")
-            for i, result in enumerate(results, 0):
-                article = result["article"]
-                print(f"{i+1}. [{result['score']:.6f}] {article['title']}")
-                print(f"   ID: {article['id']}")
+    
+    # Путь к сохраненным данным
+    data_path = os.path.join(BASE_DIR, "mos_zakupki_articles")
+    
+    # Проверяем существование сохраненных данных
+    if os.path.exists(data_path):
+        print("Загрузка сохраненных данных...")
+        if vectorizer.load_data(data_path):
+            _article_vectorizer = vectorizer
+            print("Модель успешно инициализирована с загруженными данными")
+            return vectorizer
+        else:
+            print("Не удалось загрузить сохраненные данные")
+    else:
+        print("Сохраненные данные не найдены")
+        print("Загрузка новых данных")
+        articles_url = "https://zakupki.mos.ru/newapi/api/KnowledgeBase/GetArticlesBySectionType?sectionType=supplier"
+        if vectorizer.fetch_articles(articles_url) and vectorizer.create_embeddings() and vectorizer.build_index():
+            vectorizer.save_data(data_path)
+            _article_vectorizer = vectorizer
+            return vectorizer
+    
+    _article_vectorizer = vectorizer
+    return vectorizer
 
 
-# if __name__ == "__main__":
-#     main()
+def search_articles_by_text(text, top_k=5):
+    """
+    Функция для поиска статей по тексту, возвращает только ID статей
+    """
+    global _article_vectorizer
+    
+    # Если модель не инициализирована, инициализируем её
+    if _article_vectorizer is None:
+        _article_vectorizer = init_model()
+    
+    # Выполняем поиск и возвращаем только ID
+    results = _article_vectorizer.search_articles_ids(text, top_k)
+    
+    # Возвращаем список ID
+    return [result["id"] for result in results]
 
 
-if __name__ == "__main__":
-    search_example()
+def search_articles_with_scores(text, top_k=5):
+    """
+    Функция для поиска статей по тексту с возвратом ID и оценок
+    """
+    global _article_vectorizer
+    
+    # Если модель не инициализирована, инициализируем её
+    if _article_vectorizer is None:
+        _article_vectorizer = init_model()
+    
+    # Выполняем поиск и возвращаем ID с оценками
+    return _article_vectorizer.search_articles_ids(text, top_k)
+
+def get_serialized_arts_by_text(text):
+    from help.models import ArticleNew
+    from help.serializer import ArticleSerializer
+
+    art_ids = search_articles_by_text(text)
+
+
+    arts_data = []
+    for art_id in art_ids:
+        art = ArticleNew.objects.filter(id=art_id)
+        if art.exists():
+            arts_data.append(ArticleSerializer(art.first()).data)
+        else:
+            print(f"Статьи с ID {art_id} нет в бд!!!")
+
+    return arts_data
+
+
