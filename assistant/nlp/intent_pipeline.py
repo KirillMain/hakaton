@@ -13,6 +13,8 @@ from sklearn.metrics import classification_report, f1_score, confusion_matrix
 from assistant.nlp.nlp_utils import correct_and_detect
 from assistant.arts import get_serialized_arts_by_text
 
+from history.utils import find_any_history_model
+
 
 def normalize_text(s: str) -> str:
     if s is None:
@@ -366,7 +368,7 @@ def process_query(
     text: str, model_dir: str, profile: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     user_text = text
-    text = correct_and_detect(text)['corrected']
+    text = correct_and_detect(text)["corrected"]
     bundle = load_bundle(model_dir)
     entities = extract_entities(text)
 
@@ -436,12 +438,16 @@ def process_query(
             "data": get_serialized_arts_by_text(normalize_text(text)),
         }
     elif intent == "VIEW":
+        history_data = find_any_history_model(
+            entities.purchase_id, entities.inn or inn, normalize_text(text)
+        )
         result["routing"] = {
             "type": "VIEW",
             "purchase_id": entities.purchase_id,
             "inn": entities.inn or inn,
             "name_query": None if entities.purchase_id else normalize_text(text),
             "as_of_date": entities.as_of_date or as_of,
+            "data": history_data,
         }
     elif intent == "ACTION":
         result["routing"] = {

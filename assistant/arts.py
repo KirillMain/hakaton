@@ -33,60 +33,66 @@ class ArticleVectorizer:
         self.embeddings = None
         self.index = None
 
-    def fetch_articles(self, url):
+    def fetch_articles(self, url_base="https://zakupki.mos.ru/newapi/api/KnowledgeBase/GetArticlesBySectionType"):
         """
         Парсинг статей с указанного URL
         """
+
+        sections = ["customer", "supplier", "general", "instruction"]
+
         print(f"Загружаем статьи с {url}...")
 
-        try:
-            response = requests.get(url, timeout=30)
-            response.raise_for_status()
+        for section in sections:
+            url = f"{url_base}?sectionType={section}"
 
-            data = response.json()
+            try:
+                response = requests.get(url, timeout=30)
+                response.raise_for_status()
 
-            unique_ids = []
+                data = response.json()
 
-            for cat in data:
-                for articles_by_service in cat["articlesByService"]:
-                    for article in articles_by_service["articles"]:
-                        # Обрабатываем разные форматы статей
-                        article_id = article.get("id")
-                        title = article.get("largeName")
-                        content = (
-                            article.get("instructionOperator")
-                            if article.get("detailText") == ""
-                            else article.get("detailText")
-                        )
+                unique_ids = []
 
-                        if article_id in unique_ids:
-                            print(f"Найден дубликат статьи с ID {article_id}, пропускаем")
-                            continue
-                        else:
-                            unique_ids.append(article_id)
+                for cat in data:
+                    for articles_by_service in cat["articlesByService"]:
+                        for article in articles_by_service["articles"]:
+                            # Обрабатываем разные форматы статей
+                            article_id = article.get("id")
+                            title = article.get("largeName")
+                            content = (
+                                article.get("instructionOperator")
+                                if article.get("detailText") == ""
+                                else article.get("detailText")
+                            )
 
-                        # Очищаем HTML теги если они есть
-                        title = self.clean_html(title)
-                        content = self.clean_html(content)
+                            if article_id in unique_ids:
+                                print(f"Найден дубликат статьи с ID {article_id}, пропускаем")
+                                continue
+                            else:
+                                unique_ids.append(article_id)
 
-                        # Создаем текст для эмбеддинга (заголовок + содержание)
-                        text_for_embedding = f"{title}. {content}"
+                            # Очищаем HTML теги если они есть
+                            title = self.clean_html(title)
+                            content = self.clean_html(content)
 
-                        self.articles.append(
-                            {
-                                "id": article_id,
-                                "title": title,
-                                "content": content,
-                                "text_for_embedding": text_for_embedding,
-                            }
-                        )
+                            # Создаем текст для эмбеддинга (заголовок + содержание)
+                            text_for_embedding = f"{title}. {content}"
 
-            print(f"Загружено {len(self.articles)} статей")
-            return True
+                            self.articles.append(
+                                {
+                                    "id": article_id,
+                                    "title": title,
+                                    "content": content,
+                                    "text_for_embedding": text_for_embedding,
+                                }
+                            )
 
-        except Exception as e:
-            print(f"Ошибка при загрузке статей: {e}")
-            return False
+                print(f"Загружено {len(self.articles)} статей")
+                return True
+
+            except Exception as e:
+                print(f"Ошибка при загрузке статей: {e}")
+                return False
 
     def clean_html(self, text):
         """Очистка HTML тегов из текста"""
