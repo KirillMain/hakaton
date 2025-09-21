@@ -15,6 +15,7 @@ from sklearn.metrics import classification_report, f1_score, confusion_matrix
 from sklearn.model_selection import GroupShuffleSplit, train_test_split
 
 from assistant.nlp.nlp_utils import correct_and_detect
+from assistant.arts import get_serialized_arts_by_text
 
 
 def normalize_text(s: str) -> str:
@@ -280,7 +281,11 @@ def process_query(
     }
 
     if intent == "HELP":
-        result["routing"] = {"type": "HELP", "search": normalize_text(text)}
+        result["routing"] = {
+            "type": "HELP",
+            "search": normalize_text(text),
+            "data": get_serialized_arts_by_text(normalize_text(text)),
+        }
     elif intent == "VIEW":
         result["routing"] = {
             "type": "VIEW",
