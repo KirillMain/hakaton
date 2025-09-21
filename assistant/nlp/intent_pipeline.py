@@ -216,6 +216,9 @@ def extract_tags(text: str) -> List[str]:
         tags.append("NEEDS_PROCUREMENT")
     if "котировоч" in t or re.search(r"\bкс\b", t):
         tags.append("QUOTE_SESSION")
+
+    print(tags)
+
     return sorted(set(tags))
 
 
@@ -236,7 +239,7 @@ def build_examples(text: str, tags: List[str], ent: Entities) -> List[str]:
     if "ACTION_VERB" in tags and not any(
         t in tags for t in ["DIRECT_PURCHASE", "NEEDS_PROCUREMENT", "QUOTE_SESSION"]
     ):
-        ex += ["Создать закупку", "Оформить закупку"]
+        ex += ["Создать котировочную сессию", "Создать прямую закупку", "Создать закупку по потребностям"]
 
     if "QUESTION" in tags or "HELP_KEYWORD" in tags:
         ex += ["Как создать прямую закупку?", "Как объединить профили организации?"]
@@ -366,8 +369,7 @@ def process_query(
     text: str, model_dir: str, profile: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     user_text = text
-    # text = correct_and_detect(text)['corrected']
-    # print(text)
+
     bundle = load_bundle(model_dir)
     entities = extract_entities(text)
 
@@ -383,28 +385,28 @@ def process_query(
     else:
         intent, conf = predict_intent(
             text,
-            bundle["intent_word_vec"],
-            bundle["intent_char_vec"],
-            bundle["intent_clf"],
+            bundle.get("intent_word_vec"),
+            bundle.get("intent_char_vec"),
+            bundle.get("intent_clf"),
         )
 
     action_type, action_conf = None, None
     if intent == "ACTION":
-        if (
-            bundle.get("atype_word_vec") is not None
-            and bundle.get("atype_char_vec") is not None
-            and bundle.get("atype_clf") is not None
-        ):
-            atype, aconf = predict_action_type(
-                text,
-                bundle["atype_word_vec"],
-                bundle["atype_char_vec"],
-                bundle["atype_clf"],
-            )
+        at_w, at_c, at_clf = (
+            bundle.get("atype_word_vec"),
+            bundle.get("atype_char_vec"),
+            bundle.get("atype_clf"),
+        )
+        if at_w is not None and at_c is not None and at_clf is not None:
+            atype, aconf = predict_action_type(text, at_w, at_c, at_clf)
             action_type, action_conf = atype, aconf
+
         if action_type is None or (action_conf is not None and action_conf < 0.60):
             if hint:
                 action_type = hint
+
+        if not action_type:
+            action_type = "OTHER"
 
     inn = None
     as_of = None
@@ -412,7 +414,7 @@ def process_query(
         inn = profile.get("inn") or None
         as_of = profile.get("as_of_date") or None
 
-    result = {
+    result: Dict[str, Any] = {
         "input": user_text,
         "intent": intent,
         "intent_confidence": round(conf or 0.0, 4),
@@ -423,19 +425,23 @@ def process_query(
             "qty": entities.qty,
             "budget": entities.budget,
         },
-        "action_type": action_type,
+        "action_type": action_type if intent == "ACTION" else None,
         "action_type_confidence": (
-            round(action_conf or 0.0, 4) if action_conf is not None else None
+            round(action_conf or 0.0, 4)
+            if (intent == "ACTION" and action_conf is not None)
+            else None
         ),
         "routing": None,
     }
 
     if intent == "HELP":
+        query = normalize_text(text)
         result["routing"] = {
             "type": "HELP",
-            "search": normalize_text(text),
-            "data": get_serialized_arts_by_text(normalize_text(text)),
+            "search": query,
+            "data": get_serialized_arts_by_text(query),
         }
+
     elif intent == "VIEW":
         result["routing"] = {
             "type": "VIEW",
@@ -444,6 +450,7 @@ def process_query(
             "name_query": None if entities.purchase_id else normalize_text(text),
             "as_of_date": entities.as_of_date or as_of,
         }
+
     elif intent == "ACTION":
         result["routing"] = {
             "type": "ACTION",
@@ -455,6 +462,11 @@ def process_query(
                 "budget": entities.budget,
             },
         }
+
+        if (action_type or "OTHER") == "OTHER":
+            tags = extract_tags(text)
+            result["tags"] = build_examples(text, tags, entities)
+
     else:
         # UNKNOWN
         tags = extract_tags(text)
